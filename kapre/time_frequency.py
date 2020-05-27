@@ -2,6 +2,7 @@ import numpy as np
 from tensorflow.keras import backend as K
 from tensorflow.keras.layers import Layer
 from . import backend, backend_keras
+import tensorflow as tf
 
 
 class Spectrogram(Layer):
@@ -76,6 +77,8 @@ class Spectrogram(Layer):
         return_decibel_spectrogram=False,
         trainable_kernel=False,
         image_data_format='default',
+        pad_mode='reflect',
+        
         **kwargs,
     ):
         assert n_dft > 1 and ((n_dft & (n_dft - 1)) == 0), (
@@ -99,6 +102,7 @@ class Spectrogram(Layer):
         self.trainable_kernel = trainable_kernel
         self.n_hop = n_hop
         self.padding = padding
+        self.pad_mode = pad_mode
         self.power_spectrogram = float(power_spectrogram)
         self.return_decibel_spectrogram = return_decibel_spectrogram
         super(Spectrogram, self).__init__(**kwargs)
@@ -117,15 +121,10 @@ class Spectrogram(Layer):
         self.n_frame = conv_output_length(self.len_src, self.n_dft, self.padding, self.n_hop)
 
         dft_real_kernels, dft_imag_kernels = backend.get_stft_kernels(self.n_dft)
-        self.dft_real_kernels = K.variable(dft_real_kernels, dtype=K.floatx(), name="real_kernels")
-        self.dft_imag_kernels = K.variable(dft_imag_kernels, dtype=K.floatx(), name="imag_kernels")
+        self.dft_real_kernels = tf.Variable(dft_real_kernels, dtype=K.floatx(), name="real_kernels",trainable=self.trainable_kernel)
+        self.dft_imag_kernels = tf.Variable(dft_imag_kernels, dtype=K.floatx(), name="imag_kernels",trainable=self.trainable_kernel)
         # kernels shapes: (filter_length, 1, input_dim, nb_filter)?
-        if self.trainable_kernel:
-            self.trainable_weights.append(self.dft_real_kernels)
-            self.trainable_weights.append(self.dft_imag_kernels)
-        else:
-            self.non_trainable_weights.append(self.dft_real_kernels)
-            self.non_trainable_weights.append(self.dft_imag_kernels)
+
 
         super(Spectrogram, self).build(input_shape)
         # self.built = True
@@ -137,6 +136,9 @@ class Spectrogram(Layer):
             return input_shape[0], self.n_filter, self.n_frame, self.n_ch
 
     def call(self, x):
+        if self.pad_mode:
+            assert self.pad_mode in ('symmetric', 'reflect', 'constant')
+            x = tf.pad(x, tf.constant([[0,0],[0,0],[self.n_dft//2,self.n_dft//2]]), mode=self.pad_mode)
         output = self._spectrogram_mono(x[:, 0:1, :])
         if self.is_mono is False:
             for ch_idx in range(1, self.n_ch):
@@ -159,6 +161,7 @@ class Spectrogram(Layer):
             'return_decibel_spectrogram': self.return_decibel_spectrogram,
             'trainable_kernel': self.trainable_kernel,
             'image_data_format': self.image_data_format,
+            'pad_mode': self.pad_mode,
         }
         base_config = super(Spectrogram, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))

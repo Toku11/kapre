@@ -3,14 +3,229 @@ from tensorflow.keras import backend as K
 from tensorflow.keras.layers import Layer
 from . import backend, backend_keras
 import tensorflow as tf 
-import warnings
+
+import numpy as np
+from tensorflow.keras import backend as K
+from tensorflow.keras.layers import Layer
+from . import backend, backend_keras
+import tensorflow as tf
+
 
 class Spectrogram(Layer):
     """
     ### `Spectrogram`
 
     ```python
-    kapre.time_frequency.Spectrogram(n_dft=512, n_hop=None, padding='same',
+    kapre.time_frequency.Spectrogram(n_dft=512, hop_length=None, padding='same',
+                                     power_spectrogram=2.0, return_decibel_spectrogram=False,
+                                     trainable_kernel=False, image_data_format='default',
+                                     **kwargs)
+    ```
+    Spectrogram layer that outputs spectrogram(s) in 2D image format.
+
+    #### Parameters
+     * n_dft: int > 0 [scalar]
+       - The number of DFT points, presumably power of 2.
+       - Default: ``512``
+
+     * hop_length: int > 0 [scalar]
+       - Hop length between frames in sample,  probably <= ``n_dft``.
+       - Default: ``None`` (``n_dft / 2`` is used)
+
+     * padding: str, ``'same'`` or ``'valid'``.
+       - Padding strategies at the ends of signal.
+       - Default: ``'same'``
+
+     * power_spectrogram: float [scalar],
+       -  ``2.0`` to get power-spectrogram, ``1.0`` to get amplitude-spectrogram.
+       -  Usually ``1.0`` or ``2.0``.
+       -  Default: ``2.0``
+
+     * return_decibel_spectrogram: bool,
+       -  Whether to return in decibel or not, i.e. returns log10(amplitude spectrogram) if ``True``.
+       -  Recommended to use ``True``, although it's not by default.
+       -  Default: ``False``
+
+     * trainable_kernel: bool
+       -  Whether the kernels are trainable or not.
+       -  If ``True``, Kernels are initialised with DFT kernels and then trained.
+       -  Default: ``False``
+
+     * image_data_format: string, ``'channels_first'`` or ``'channels_last'``.
+       -  The returned spectrogram follows this image_data_format strategy.
+       -  If ``'default'``, it follows the current Keras session's setting.
+       -  Setting is in ``./keras/keras.json``.
+       -  Default: ``'default'``
+
+    #### Notes
+     * The input should be a 2D array, ``(audio_channel, audio_length)``.
+     * E.g., ``(1, 44100)`` for mono signal, ``(2, 44100)`` for stereo signal.
+     * It supports multichannel signal input, so ``audio_channel`` can be any positive integer.
+     * The input shape is not related to keras `image_data_format()` config.
+
+    #### Returns
+
+    A Keras layer
+
+     * abs(Spectrogram) in a shape of 2D data, i.e.,
+     * `(None, n_channel, n_freq, n_time)` if `'channels_first'`,
+     * `(None, n_freq, n_time, n_channel)` if `'channels_last'`,
+
+
+    """
+
+    def __init__(
+        self,
+        n_fft:int=512,
+        hop_length:int=None,
+        center=True,
+        pad_mode:str='constant',
+        power_spectrogram:float=1.0,
+        return_decibel_spectrogram:bool=False,
+        trainable_kernel:bool=False,
+        keep_old_order:bool=False,
+        image_data_format:str='default',
+        **kwargs,
+    
+    ):
+            
+            
+        assert n_fft > 1 and ((n_fft & (n_fft - 1)) == 0), (
+            'f_dft should be > 1 and power of 2, but f_dft == %d' % n_fft
+        )
+        assert n_fft % 2 == 0
+        
+        if hop_length is None:
+            hop_length = n_fft // 4
+
+        assert image_data_format in ('default', 'channels_first', 'channels_last')
+        if image_data_format == 'default':
+            self.image_data_format = K.image_data_format()
+        else:
+            self.image_data_format = image_data_format
+        
+        self.keep_old_order = keep_old_order
+        
+        if self.keep_old_order:
+            tf.python.deprecation.logging.warn("SPECTROGRAM (..,Features,Time,..) output order is deprecated (..,Time,Features,..) is the future \\o/")
+            
+
+        self.n_fft = n_fft
+        self.hop_length = hop_length
+        self.center = center
+        self.pad_mode = pad_mode
+        self.power_spectrogram = power_spectrogram
+        self.return_decibel_spectrogram = return_decibel_spectrogram
+        self.trainable_kernel = trainable_kernel
+        
+        
+        super(Spectrogram, self).__init__(**kwargs)
+
+    def build(self, input_shape):
+        self.n_ch = input_shape[1]
+        self.len_src = input_shape[2]
+        self.is_mono = self.n_ch == 1
+        
+        if self.image_data_format == 'channels_first':
+            self.ch_axis_idx = 1
+        else:
+            self.ch_axis_idx = 3
+            
+        if self.len_src is not None:
+            assert self.len_src >= self.n_fft, 'Hey! The input is too short!'
+
+        dft_real_kernels, dft_imag_kernels = backend.tf_get_stft_kernels(self.n_fft)
+        self.dft_real_kernels = tf.Variable(dft_real_kernels, dtype=K.floatx(), name="real_kernels",trainable=self.trainable_kernel)
+        self.dft_imag_kernels = tf.Variable(dft_imag_kernels, dtype=K.floatx(), name="imag_kernels",trainable=self.trainable_kernel)
+
+        super(Spectrogram, self).build(input_shape)
+        
+
+    def call(self, x):
+        
+        output = self._spectrogram_mono(x[:, 0:1, :], 
+                                        pad_mode=self.pad_mode,
+                                        n_fft=self.n_fft,
+                                        hop_length=self.hop_length,
+                                        center=self.center)
+        
+        if self.is_mono is False:
+            for ch_idx in range(1, self.n_ch):
+                output = K.concatenate(
+                    (output, self._spectrogram_mono(x[:, ch_idx : ch_idx + 1, :])),
+                    axis=self.ch_axis_idx,
+                )
+        if self.power_spectrogram != 2.0:
+            output = K.pow(K.abs(K.sqrt(output)), self.power_spectrogram)
+        
+        if self.return_decibel_spectrogram:
+            output = backend_keras.amplitude_to_decibel(output)
+            
+        return output
+
+    def get_config(self):
+        config = {
+            'n_fft': self.n_fft,
+            'hop_length': self.hop_length,
+            'pad_mode': self.pad_mode,
+            'center': self.center,
+            'power_spectrogram': self.power_spectrogram,
+            'return_decibel_spectrogram': self.return_decibel_spectrogram,
+            'keep_old_order': self.keep_old_order,
+            'trainable_kernel': self.trainable_kernel,
+            'image_data_format': self.image_data_format,
+        }
+        base_config = super(Spectrogram, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
+    def _spectrogram_mono(self, x, pad_mode, n_fft, hop_length, center):
+        '''x.shape : (None, 1, len_src),
+        returns 2D batch of a mono power-spectrogram'''
+        
+        if center:
+            assert pad_mode in ('symmetric', 'reflect', 'constant')
+            x = tf.pad(x, tf.constant([[0,0],
+                                       [0,0],
+                                       [n_fft//2,n_fft//2]]), 
+                       mode=pad_mode)
+
+        x = K.permute_dimensions(x, [0, 2, 1])
+        x = K.expand_dims(x, 3)  # add a dummy dimension (channel axis)
+        subsample = (hop_length, 1)
+        output_real = K.conv2d(
+            x,
+            self.dft_real_kernels,
+            strides=subsample,
+            padding='valid',
+            data_format='channels_last',
+        )
+        output_imag = K.conv2d(
+            x,
+            self.dft_imag_kernels,
+            strides=subsample,
+            padding='valid',
+            data_format='channels_last',
+        )
+        output = output_real ** 2 + output_imag ** 2
+        # now shape is (batch_sample, time, 1, freq)
+        if self.keep_old_order:
+            # now shape is (batch_sample, freq, 1, time)
+            output = K.permute_dimensions(output, [0, 3, 2, 1])
+            
+        if self.image_data_format == 'channels_first':
+            output = K.permute_dimensions(output, [0, 2, 1, 3])
+        else:
+            output = K.permute_dimensions(output, [0, 1, 3, 2])
+        return output
+
+
+
+class tf_Spectrogram(Layer):
+    """
+    ### `Spectrogram`
+
+    ```python
+    kapre.time_frequency.Spectrogram(n_fft=512, hop_length=None, padding='same',
                                      power_spectrogram=2.0, return_decibel_spectrogram=False,
                                      trainable_kernel=False, 
                                      image_data_format='default',
@@ -91,7 +306,6 @@ class Spectrogram(Layer):
         assert n_fft > 1 and ((n_fft & (n_fft - 1)) == 0), (
             'n_fft should be > 1 and power of 2, but n_fft == %d' % n_fft
         )
-        assert pad_mode in ('symmetric', 'reflect', 'constant')
         assert n_fft % 2 == 0
         assert image_data_format in ('default', 'channels_first', 'channels_last')
         
@@ -107,7 +321,7 @@ class Spectrogram(Layer):
         self.keep_old_order = keep_old_order
         
         if self.keep_old_order:
-            tf.python.deprecation.logging.warn("(..,Features,Time,..) output order is deprecated (..,Time,Features,..) is the future \\o/")
+            tf.python.deprecation.logging.warn("SPECTROGRAM (..,Features,Time,..) output order is deprecated (..,Time,Features,..) is the future \\o/")
             
         self.n_fft = n_fft
         self.hop_length = hop_length
@@ -182,9 +396,10 @@ class Spectrogram(Layer):
                      center:bool=True,
                      pad_mode:str='reflect'):
         
-        assert pad_mode in ('symmetric', 'reflect', 'constant')
+        
         
         if center:
+            assert pad_mode in ('symmetric', 'reflect', 'constant')
             x = tf.pad(x, tf.constant([[0,0],[0,0],[n_fft//2,n_fft//2]]), mode=pad_mode)
 
         return tf.signal.stft(
@@ -193,10 +408,11 @@ class Spectrogram(Layer):
                 frame_step=hop_length,
                 fft_length=n_fft,
                 pad_end=False,
-                window_fn=tf.signal.hann_window)
+                window_fn=tf.signal.hann_window,
+                name='stft')
+    
 
-
-
+    
 class MelSpectrogram(Spectrogram):
     """
     ### `Melspectrogram`
@@ -284,7 +500,7 @@ class MelSpectrogram(Spectrogram):
             kwargs['hop_length'] = sr // 100 # 10ms window
         
         if keep_old_order:
-            tf.python.deprecation.logging.warn("(..,Features,Time,..) output order is deprecated..(..,Time,Features,..) is the future \\o/")
+            tf.python.deprecation.logging.warn("MEL(..,Features,Time,..) output order is deprecated..(..,Time,Features,..) is the future \\o/")
             
         assert sr > 0
         
@@ -323,9 +539,9 @@ class MelSpectrogram(Spectrogram):
                                 fmax=self.fmax 
                                 )
         
-        self.freq2mel = tf.Variable(mel_basis, 
-                                    dtype=K.floatx(), 
-                                    trainable=self.trainable_fb)
+        self.freq2mel = K.variable(mel_basis, 
+                                    dtype=K.floatx()) 
+                                    #trainable=self.trainable_fb)
         self.built = True
 
     def call(self, x):
@@ -363,6 +579,9 @@ class MelSpectrogram(Spectrogram):
         }
         base_config = super(MelSpectrogram, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
+    
+    def _gone_in_future_version_order(self, output):
+        return K.permute_dimensions(output, [0, 1, 3, 2])
 
 
 def conv_output_length(input_length, filter_size, padding, stride, dilation=1):

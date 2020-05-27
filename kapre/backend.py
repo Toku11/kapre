@@ -57,6 +57,52 @@ def tf_mel(sr:int, n_fft:int, spec_bins:int=None, n_mels:int=128, fmin:float=0.0
             upper_edge_hertz=fmax,
         )
 
+def tf_get_stft_kernels(n_dft):
+    
+    """[tf] Return dft kernels for real/imagnary parts assuming
+        the input . is real.
+    An asymmetric hann window is used (scipy.signal.hann).
+
+    Parameters
+    ----------
+    n_dft : int > 0 and power of 2 [scalar]
+        Number of dft components.
+
+    Returns
+    -------
+        |  dft_real_kernels : np.ndarray [shape=(nb_filter, 1, 1, n_win)]
+        |  dft_imag_kernels : np.ndarray [shape=(nb_filter, 1, 1, n_win)]
+
+    * nb_filter = n_dft/2 + 1
+    * n_win = n_dft
+
+    """
+    assert n_dft > 1 and ((n_dft & (n_dft - 1)) == 0), (
+        'n_dft should be > 1 and power of 2, but n_dft == %d' % n_dft
+    )
+
+    nb_filter = int(n_dft // 2 + 1)
+
+    # prepare DFT filters
+    # prepare DFT filters
+    timesteps = K.arange(n_dft,dtype=K.floatx())
+    w_ks = K.arange(nb_filter,dtype=K.floatx()) * 2.0 * np.pi / K.constant(n_dft,dtype=K.floatx())
+    dft_real_kernels = K.cos(K.reshape(w_ks,(-1, 1)) * K.reshape(timesteps,(1, -1)))
+    dft_imag_kernels = -K.sin(K.reshape(w_ks,(-1, 1)) * K.reshape(timesteps,(1, -1)))
+
+    # windowing DFT filters
+    dft_window = tf.signal.hann_window(n_dft,name='hann')
+    dft_window = K.reshape(dft_window,(1,-1))
+    dft_real_kernels = tf.math.multiply(dft_real_kernels, dft_window)
+    dft_imag_kernels = tf.math.multiply(dft_imag_kernels, dft_window)
+    dft_real_kernels = K.transpose(dft_real_kernels)
+    dft_imag_kernels = K.transpose(dft_imag_kernels)
+    dft_real_kernels = K.expand_dims(K.expand_dims(dft_real_kernels,1),1)
+    dft_imag_kernels = K.expand_dims(K.expand_dims(dft_imag_kernels,1),1)
+
+
+    return dft_real_kernels, dft_imag_kernels
+
 
 def get_stft_kernels(n_dft):
     """[np] Return dft kernels for real/imagnary parts assuming
