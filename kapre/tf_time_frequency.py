@@ -1,14 +1,9 @@
-import numpy as np
-from tensorflow.keras import backend as K
-from tensorflow.keras.layers import Layer
-from . import backend, backend_keras
-import tensorflow as tf 
-
-import numpy as np
-from tensorflow.keras import backend as K
-from tensorflow.keras.layers import Layer
-from . import backend, backend_keras
 import tensorflow as tf
+from tensorflow.python.framework import tensor_shape
+from tensorflow.python.keras.engine.input_spec import InputSpec
+from tensorflow.keras import backend as K
+from tensorflow.keras.layers import Layer
+from . import backend, backend_keras
 
 
 class Spectrogram(Layer):
@@ -99,6 +94,7 @@ class Spectrogram(Layer):
             hop_length = n_fft // 4
 
         assert image_data_format in ('default', 'channels_first', 'channels_last')
+        
         if image_data_format == 'default':
             self.image_data_format = K.image_data_format()
         else:
@@ -107,7 +103,7 @@ class Spectrogram(Layer):
         self.keep_old_order = keep_old_order
         
         if self.keep_old_order:
-            tf.python.deprecation.logging.warn("SPECTROGRAM (..,Features,Time,..) output order is deprecated (..,Time,Features,..) is the future \\o/")
+            tf.compat.v1.logging.warn("SPECTROGRAM (..,Features,Time,..) output order is deprecated (..,Time,Features,..) is the future \\o/")
             
 
         self.n_fft = n_fft
@@ -117,7 +113,7 @@ class Spectrogram(Layer):
         self.power_spectrogram = power_spectrogram
         self.return_decibel_spectrogram = return_decibel_spectrogram
         self.trainable_kernel = trainable_kernel
-        
+        self.input_spec = InputSpec(min_ndim=1)
         
         super(Spectrogram, self).__init__(**kwargs)
 
@@ -133,13 +129,34 @@ class Spectrogram(Layer):
             
         if self.len_src is not None:
             assert self.len_src >= self.n_fft, 'Hey! The input is too short!'
-
+        
         dft_real_kernels, dft_imag_kernels = backend.tf_get_stft_kernels(self.n_fft)
-        self.dft_real_kernels = tf.Variable(dft_real_kernels, dtype=K.floatx(), name="real_kernels",trainable=self.trainable_kernel)
-        self.dft_imag_kernels = tf.Variable(dft_imag_kernels, dtype=K.floatx(), name="imag_kernels",trainable=self.trainable_kernel)
-
+        
+        self.dft_real_kernels = tf.Variable(dft_real_kernels,
+                                                name="real_kernels",
+                                                dtype=K.floatx(), 
+                                                trainable=self.trainable_kernel)
+        self.dft_imag_kernels = tf.Variable(dft_imag_kernels,
+                                                name="imag_kernels",
+                                                dtype=K.floatx(),
+                                                trainable=self.trainable_kernel)
+        
+        self.built=True
+        
         super(Spectrogram, self).build(input_shape)
         
+    def compute_output_shape(self, input_shape):
+        
+        if self.image_data_format == 'channels_first':
+            return tensor_shape.TensorShape([input_shape[0]]+ 
+                            [self.n_ch]+ 
+                            [self.nfft//2+1]+ 
+                            [self.len_src//self.hop_lenght])
+        else:
+            return tensor_shape.TensorShape([input_shape[0]]+ 
+                        [self.nfft//2+1]+ 
+                        [self.len_src//self.hop_lenght]+ 
+                        [self.n_ch])
 
     def call(self, x):
         
@@ -148,7 +165,7 @@ class Spectrogram(Layer):
                                         n_fft=self.n_fft,
                                         hop_length=self.hop_length,
                                         center=self.center)
-        
+
         if self.is_mono is False:
             for ch_idx in range(1, self.n_ch):
                 output = K.concatenate(
@@ -158,6 +175,7 @@ class Spectrogram(Layer):
         if self.power_spectrogram != 2.0:
             output = K.pow(K.abs(K.sqrt(output)), self.power_spectrogram)
         
+
         if self.return_decibel_spectrogram:
             output = backend_keras.amplitude_to_decibel(output)
             
@@ -182,31 +200,33 @@ class Spectrogram(Layer):
         '''x.shape : (None, 1, len_src),
         returns 2D batch of a mono power-spectrogram'''
         
-        if center:
-            assert pad_mode in ('symmetric', 'reflect', 'constant')
-            x = tf.pad(x, tf.constant([[0,0],
-                                       [0,0],
-                                       [n_fft//2,n_fft//2]]), 
-                       mode=pad_mode)
-
-        x = K.permute_dimensions(x, [0, 2, 1])
         x = K.expand_dims(x, 3)  # add a dummy dimension (channel axis)
+#         if center:
+#             assert pad_mode in ('symmetric', 'reflect', 'constant')
+#             x = tf.pad(x, tf.constant([[0,0],
+#                                       [0,0],
+#                                       [n_fft//2,n_fft//2],
+#                                       [0,0]]), 
+#                       mode=pad_mode,name='pad_spec')
+            
+        x = K.permute_dimensions(x, [0, 2, 1, 3])
         subsample = (hop_length, 1)
         output_real = K.conv2d(
             x,
             self.dft_real_kernels,
             strides=subsample,
-            padding='valid',
+            padding='same',
             data_format='channels_last',
         )
         output_imag = K.conv2d(
             x,
             self.dft_imag_kernels,
             strides=subsample,
-            padding='valid',
+            padding='same',
             data_format='channels_last',
         )
         output = output_real ** 2 + output_imag ** 2
+        
         # now shape is (batch_sample, time, 1, freq)
         if self.keep_old_order:
             # now shape is (batch_sample, freq, 1, time)
@@ -321,7 +341,7 @@ class tf_Spectrogram(Layer):
         self.keep_old_order = keep_old_order
         
         if self.keep_old_order:
-            tf.python.deprecation.logging.warn("SPECTROGRAM (..,Features,Time,..) output order is deprecated (..,Time,Features,..) is the future \\o/")
+            tf.compat.v1.logging.warn("SPECTROGRAM (..,Features,Time,..) output order is deprecated (..,Time,Features,..) is the future \\o/")
             
         self.n_fft = n_fft
         self.hop_length = hop_length
@@ -331,7 +351,7 @@ class tf_Spectrogram(Layer):
         self.return_decibel_spectrogram = return_decibel_spectrogram
         
         
-        super(Spectrogram, self).__init__(**kwargs)
+        super(tf_Spectrogram, self).__init__(**kwargs)
 
     def build(self, input_shape):
         
@@ -348,7 +368,7 @@ class tf_Spectrogram(Layer):
             assert self.len_src >= self.n_fft, 'Input is too short!'
         
 
-        super(Spectrogram, self).build(input_shape)
+        super(tf_Spectrogram, self).build(input_shape)
 
     def call(self, x):
         output = self._tf_get_stft(x, 
@@ -367,8 +387,8 @@ class tf_Spectrogram(Layer):
             
         if self.image_data_format == 'channels_last':
             output = K.permute_dimensions(output, [0, 2, 3, 1])
-        
-        
+        else:
+            output = K.permute_dimensions(output, [0, 1, 2, 3])
             
         
         return output
@@ -387,7 +407,7 @@ class tf_Spectrogram(Layer):
             'keep_old_order': self.keep_old_order,
             'image_data_format': self.image_data_format,
         }
-        base_config = super(Spectrogram, self).get_config()
+        base_config = super(tf_Spectrogram, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
     
     def _tf_get_stft(self, x, 
@@ -500,7 +520,7 @@ class MelSpectrogram(Spectrogram):
             kwargs['hop_length'] = sr // 100 # 10ms window
         
         if keep_old_order:
-            tf.python.deprecation.logging.warn("MEL(..,Features,Time,..) output order is deprecated..(..,Time,Features,..) is the future \\o/")
+            tf.compat.v1.logging.warn("MEL(..,Features,Time,..) output order is deprecated..(..,Time,Features,..) is the future \\o/")
             
         assert sr > 0
         
@@ -522,27 +542,39 @@ class MelSpectrogram(Spectrogram):
         self.return_decibel_melgram = return_decibel_melgram
         self.trainable_fb = trainable_fb
         self.keep_old_order_mel = keep_old_order
-        
+        self.input_spec = InputSpec(min_ndim=1)
         super(MelSpectrogram, self).__init__(keep_old_order=False,
                                              **kwargs)
         print(self.get_config())
 
     def build(self, input_shape):
-        super(MelSpectrogram, self).build(input_shape)
-        
-        self.built = False
         # compute freq2mel matrix -->
+        built = False
         mel_basis = backend.tf_mel(sr=self.sr, 
-                                n_fft=self.n_fft, 
-                                n_mels=self.n_mels, 
-                                fmin=self.fmin, 
-                                fmax=self.fmax 
-                                )
+                        n_fft=self.n_fft, 
+                        n_mels=self.n_mels, 
+                        fmin=self.fmin, 
+                        fmax=self.fmax 
+                        )
+        self.freq2mel = tf.Variable(mel_basis,
+                                    name='mel_basis',
+                                    trainable=self.trainable_fb)
         
-        self.freq2mel = K.variable(mel_basis, 
-                                    dtype=K.floatx()) 
-                                    #trainable=self.trainable_fb)
+        super(MelSpectrogram, self).build(input_shape)
         self.built = True
+        
+    def compute_output_shape(self, input_shape):
+        if self.image_data_format == 'channels_first':
+            return tensor_shape.TensorShape([input_shape[0]]+ 
+                                            [self.n_ch]+ 
+                                            [self.n_mels]+
+                                            [self.sr//self.hop_lenght])
+        else:
+            return tensor_shape.TensorShape([input_shape[0]]+ 
+                                            [self.n_mels]+
+                                            [self.sr//self.hop_lenght]+ 
+                                            [self.n_ch])
+        
 
     def call(self, x):
         power_spectrogram = super(MelSpectrogram, self).call(x)
@@ -552,8 +584,10 @@ class MelSpectrogram(Spectrogram):
         if self.image_data_format == 'channels_last':
             power_spectrogram = K.permute_dimensions(power_spectrogram, [0, 3, 1, 2])
             # now, whatever image_data_format, (batch_sample, n_ch, n_time, n_freq)
-            
-        output = K.dot(power_spectrogram, self.freq2mel)
+        else:
+            power_spectrogram = K.permute_dimensions(power_spectrogram, [0, 1, 2, 3])
+        #output = K.dot(power_spectrogram, self.freq2mel)
+        output = tf.matmul(power_spectrogram, self.freq2mel)
         
         if self.return_decibel_melgram:
             output = backend_keras.amplitude_to_decibel(output)
@@ -563,6 +597,8 @@ class MelSpectrogram(Spectrogram):
         
         if self.image_data_format == 'channels_last':
             output = K.permute_dimensions(output, [0, 2, 3, 1])
+        else:
+            output = K.permute_dimensions(output, [0, 1, 2, 3])
 
             
         return output

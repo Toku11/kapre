@@ -2,7 +2,7 @@ import tensorflow as tf
 from tensorflow.keras import backend as K
 from tensorflow.keras.layers import Layer
 from . import backend_keras
-
+from tensorflow.python.keras.engine.input_spec import InputSpec
 
 class AmplitudeToDB(Layer):
     """
@@ -157,7 +157,7 @@ class Normalization2D(Layer):
         base_config = super(Normalization2D, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
 
-
+    
 class Delta(Layer):
     """
     ### Delta
@@ -187,7 +187,11 @@ class Delta(Layer):
     """
 
     def __init__(
-        self, win_length: int = 5, mode: str = 'symmetric', data_format: str = 'default', **kwargs
+        self, 
+        win_length: int = 5, 
+        mode: str = 'constant', 
+        data_format: str = 'default', 
+        **kwargs
     ):
 
         assert data_format in ('default', 'channels_first', 'channels_last')
@@ -202,27 +206,111 @@ class Delta(Layer):
         self.win_length = win_length
         self.mode = mode
         super(Delta, self).__init__(**kwargs)
-
+    
+#     def build(self, input_shape):
+            
+#         self.n = n = (self.win_length - 1) / 2.0
+#         self.denom = n * (n + 1) * (2 * n + 1) / 3
+#         kernel = K.arange(-n, n + 1, 1, dtype=K.floatx())
+#         kernel = K.reshape(kernel, (1, kernel.shape[-1], 1, 1))  # (freq, time)
+#         self.kernel = tf.Variable(kernel, 
+#                                   dtype=K.floatx(), 
+#                                   trainable=False, 
+#                                   name='kernel_delta')
+#         self.built = True
+   
+    def compute_output_shape(self, input_shape):
+        return input_shape
+        
     def call(self, x):
-
+        
         n = (self.win_length - 1) / 2.0
         denom = n * (n + 1) * (2 * n + 1) / 3
-
+        
         if self.data_format == 'channels_first':
             x = K.permute_dimensions(x, (0, 2, 3, 1))
-
-        x = tf.pad(x, tf.constant([[0, 0], [0, 0], [int(n), int(n)], [0, 0]]), mode=self.mode)
+        else:
+            x = K.permute_dimensions(x, (0, 1, 2, 3))
+            
+        x = tf.pad(x, tf.constant([[0, 0], 
+                                  [0, 0], 
+                                  [int(n), int(n)], 
+                                  [0, 0]]),
+                   mode=self.mode, 
+                   name='pad_delta')
+                                  
         kernel = K.arange(-n, n + 1, 1, dtype=K.floatx())
         kernel = K.reshape(kernel, (1, kernel.shape[-1], 1, 1))  # (freq, time)
-
-        x = K.conv2d(x, kernel, 1, data_format='channels_last') / denom
-
+                                  
+        x = K.conv2d(x, self.kernel, 1, data_format='channels_last',padding='same') /denom
+            
         if self.data_format == 'channels_first':
             x = K.permute_dimensions(x, (0, 3, 1, 2))
+        else:
+            x = K.permute_dimensions(x, (0, 1, 2, 3))
 
         return x
 
     def get_config(self):
         config = {'win_length': self.win_length, 'mode': self.mode}
         base_config = super(Delta, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
+    
+class Concatenate(Layer):
+    def __init__(self, **kwargs):
+        self.image_data_format = K.image_data_format()
+        super(Concatenate, self).__init__(**kwargs)
+        
+    
+    def build(self, input_shape):
+        if self.image_data_format == 'channels_first':
+            self.n_ch = input_shape[0][1]
+            self.n_features = input_shape[0][2]
+            self.n_time = input_shape[0][3]
+        else:
+            self.n_ch = input_shape[0][3]
+            self.n_features = input_shape[0][1]
+            self.n_time = input_shape[0][2]
+
+        super(Concatenate, self).build(input_shape)
+        
+    def call(self, x):
+        n_el = len(x)
+        
+        
+        if self.image_data_format == 'channels_first':
+            stack = K.stack((x),axis=2)
+            output = K.reshape(stack,
+                               (-1,self.n_ch,self.n_features*n_el,self.n_time))
+        else:
+            stack = K.stack((x),axis=1)
+            output = K.reshape(stack,
+                               (-1,self.n_features*n_el,self.n_time,self.n_ch))
+
+        return output
+
+    def get_config(self):
+        config = {}
+        base_config = super(Delta, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
+    
+class Dummy(Layer):
+
+    def __init__(self, **kwargs):
+        super(Dummy, self).__init__(**kwargs)
+        self.input_spec = InputSpec(min_ndim=2)
+    def build(self, input_shape):
+        self.built = True
+        
+    def call(self, inputs):
+        return inputs
+
+    def compute_output_shape(self, input_shape):
+        return input_shape
+
+    def get_config(self):
+        config = {}
+        base_config = super(Dummy, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))

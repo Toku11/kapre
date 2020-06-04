@@ -1,7 +1,8 @@
 import numpy as np
 from tensorflow.keras import backend as K
 from tensorflow.keras.layers import Layer, InputSpec
-
+from tensorflow.python.keras.utils import tf_utils
+from tensorflow.python.ops import array_ops
 
 class AdditiveNoise(Layer):
     """
@@ -43,15 +44,27 @@ class AdditiveNoise(Layer):
         self.uses_learning_phase = True
         super(AdditiveNoise, self).__init__(**kwargs)
 
-    def call(self, x):
-        if self.random_gain:
-            noise_x = x + K.random_normal(
-                shape=K.shape(x), mean=0.0, stddev=np.random.uniform(0.0, self.power)
-            )
-        else:
-            noise_x = x + K.random_normal(shape=K.shape(x), mean=0.0, stddev=self.power)
-
-        return K.in_train_phase(noise_x, x)
+    def call(self, x, training=None):
+        if training is None:
+            training = K.learning_phase()
+            
+        def add_noise():
+            if self.random_gain:
+                noise_x = x + K.random_normal(
+                    shape=K.shape(x), 
+                    mean=0.0, 
+                    stddev=np.random.uniform(0.0, self.power)
+                )
+            else:
+                noise_x = x + K.random_normal(shape=K.shape(x), 
+                                              mean=0.0, 
+                                              stddev=self.power)
+            return noise_x
+            
+        output = tf_utils.smart_cond(training,
+                                 add_noise,
+                                 lambda: array_ops.identity(x))
+        return output# K.in_train_phase(noise_x, x)
 
     def get_config(self):
         config = {

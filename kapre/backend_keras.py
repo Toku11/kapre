@@ -1,4 +1,3 @@
-import numpy as np
 from tensorflow.keras import backend as K
 
 def log10(x):
@@ -18,7 +17,7 @@ def amplitude_to_decibel(x, amin=1e-10, dynamic_range=80.0):
     dynamic_range: dynamic_range in decibel
 
     """
-    log_spec = 10 * log10(K.maximum(amin, x))
+    log_spec = 10.0 * log10(K.maximum(amin, x))
     
 
     if K.ndim(x) > 1:

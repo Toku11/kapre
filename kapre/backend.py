@@ -13,8 +13,9 @@ Notes
         later I realised it'd be better to just use it.
     * TODO: remove copied code and use librosa.
 """
-from tensorflow.keras import backend as K
+
 import tensorflow as tf
+from tensorflow.keras import backend as K
 import numpy as np
 import librosa
 
@@ -55,6 +56,7 @@ def tf_mel(sr:int, n_fft:int, spec_bins:int=None, n_mels:int=128, fmin:float=0.0
             sample_rate=sr,
             lower_edge_hertz=fmin,
             upper_edge_hertz=fmax,
+            name='mel_weight_matrix',
         )
 
 def tf_get_stft_kernels(n_dft):
