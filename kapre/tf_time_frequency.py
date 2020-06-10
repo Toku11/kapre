@@ -75,7 +75,7 @@ class Spectrogram(Layer):
         hop_length:int=None,
         center=True,
         pad_mode:str='constant',
-        power_spectrogram:float=1.0,
+        power_spectrogram:float=2.0,
         return_decibel_spectrogram:bool=False,
         trainable_kernel:bool=False,
         keep_old_order:bool=False,
@@ -143,8 +143,6 @@ class Spectrogram(Layer):
         
         self.built=True
         
-        super(Spectrogram, self).build(input_shape)
-        
     def compute_output_shape(self, input_shape):
         
         if self.image_data_format == 'channels_first':
@@ -159,7 +157,6 @@ class Spectrogram(Layer):
                         [self.n_ch])
 
     def call(self, x):
-        
         output = self._spectrogram_mono(x[:, 0:1, :], 
                                         pad_mode=self.pad_mode,
                                         n_fft=self.n_fft,
@@ -201,13 +198,14 @@ class Spectrogram(Layer):
         returns 2D batch of a mono power-spectrogram'''
         
         x = K.expand_dims(x, 3)  # add a dummy dimension (channel axis)
-#         if center:
-#             assert pad_mode in ('symmetric', 'reflect', 'constant')
-#             x = tf.pad(x, tf.constant([[0,0],
-#                                       [0,0],
-#                                       [n_fft//2,n_fft//2],
-#                                       [0,0]]), 
-#                       mode=pad_mode,name='pad_spec')
+        
+        #         if center:
+        #             assert pad_mode in ('symmetric', 'reflect', 'constant')
+        #             x = tf.pad(x, tf.constant([[0,0],
+        #                                       [0,0],
+        #                                       [n_fft//2,n_fft//2],
+        #                                       [0,0]]), 
+        #                       mode=pad_mode,name='pad_spec')
             
         x = K.permute_dimensions(x, [0, 2, 1, 3])
         subsample = (hop_length, 1)
@@ -549,7 +547,7 @@ class MelSpectrogram(Spectrogram):
 
     def build(self, input_shape):
         # compute freq2mel matrix -->
-        built = False
+        super(MelSpectrogram, self).build(input_shape)
         mel_basis = backend.tf_mel(sr=self.sr, 
                         n_fft=self.n_fft, 
                         n_mels=self.n_mels, 
@@ -560,7 +558,7 @@ class MelSpectrogram(Spectrogram):
                                     name='mel_basis',
                                     trainable=self.trainable_fb)
         
-        super(MelSpectrogram, self).build(input_shape)
+        super(Spectrogram, self).build(input_shape)
         self.built = True
         
     def compute_output_shape(self, input_shape):
@@ -584,8 +582,7 @@ class MelSpectrogram(Spectrogram):
         if self.image_data_format == 'channels_last':
             power_spectrogram = K.permute_dimensions(power_spectrogram, [0, 3, 1, 2])
             # now, whatever image_data_format, (batch_sample, n_ch, n_time, n_freq)
-        else:
-            power_spectrogram = K.permute_dimensions(power_spectrogram, [0, 1, 2, 3])
+
         #output = K.dot(power_spectrogram, self.freq2mel)
         output = tf.matmul(power_spectrogram, self.freq2mel)
         
@@ -597,9 +594,6 @@ class MelSpectrogram(Spectrogram):
         
         if self.image_data_format == 'channels_last':
             output = K.permute_dimensions(output, [0, 2, 3, 1])
-        else:
-            output = K.permute_dimensions(output, [0, 1, 2, 3])
-
             
         return output
 
@@ -618,30 +612,4 @@ class MelSpectrogram(Spectrogram):
     
     def _gone_in_future_version_order(self, output):
         return K.permute_dimensions(output, [0, 1, 3, 2])
-
-
-def conv_output_length(input_length, filter_size, padding, stride, dilation=1):
-    """Determines output length of a convolution given input length.
-    # Arguments
-        input_length: integer.
-        filter_size: integer.
-        padding: one of `"same"`, `"valid"`, `"full"`.
-        stride: integer.
-        dilation: dilation rate, integer.
-    # Returns
-        The output length (integer).
-    """
-    if input_length is None:
-        return None
-    assert padding in {'same', 'valid', 'full', 'causal'}
-    dilated_filter_size = (filter_size - 1) * dilation + 1
-    if padding == 'same':
-        output_length = input_length
-    elif padding == 'valid':
-        output_length = input_length - dilated_filter_size + 1
-    elif padding == 'causal':
-        output_length = input_length
-    elif padding == 'full':
-        output_length = input_length + dilated_filter_size - 1
-    return (output_length + stride - 1) // stride
 
