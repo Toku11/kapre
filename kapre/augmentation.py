@@ -60,11 +60,8 @@ class AdditiveNoise(Layer):
                                               mean=0.0, 
                                               stddev=self.power)
             return noise_x
-            
-        output = tf_utils.smart_cond(training,
-                                 add_noise,
-                                 lambda: array_ops.identity(x))
-        return output# K.in_train_phase(noise_x, x)
+
+        return K.in_train_phase(noise_x, x)
 
     def get_config(self):
         config = {
