@@ -45,21 +45,16 @@ class AdditiveNoise(Layer):
         super(AdditiveNoise, self).__init__(**kwargs)
 
     def call(self, x, training=None):
-        if training is None:
-            training = K.learning_phase()
-            
-        def add_noise():
-            if self.random_gain:
-                noise_x = x + K.random_normal(
-                    shape=K.shape(x), 
-                    mean=0.0, 
-                    stddev=np.random.uniform(0.0, self.power)
-                )
-            else:
-                noise_x = x + K.random_normal(shape=K.shape(x), 
-                                              mean=0.0, 
-                                              stddev=self.power)
-            return noise_x
+        if self.random_gain:
+            noise_x = x + K.random_normal(
+                shape=K.shape(x), 
+                mean=0.0, 
+                stddev=np.random.uniform(0.0, self.power)
+            )
+        else:
+            noise_x = x + K.random_normal(shape=K.shape(x), 
+                                          mean=0.0, 
+                                          stddev=self.power)
 
         return K.in_train_phase(noise_x, x)
 
