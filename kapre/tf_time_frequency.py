@@ -141,6 +141,7 @@ class Spectrogram(Layer):
                                                 dtype=K.floatx(),
                                                 trainable=self.trainable_kernel)
         
+        #super(Spectrogram, self).build(input_shape)
         self.built=True
         
     def compute_output_shape(self, input_shape):
@@ -251,26 +252,23 @@ class tf_Spectrogram(Layer):
     ```
     Spectrogram layer that outputs spectrogram(s) in 2D image format.
 
+    Spectrogram layer that outputs spectrogram(s) in 2D image format.
+
     #### Parameters
-     * n_fft: int > 0 [scalar]
-       - The number of fFT points, presumably power of 2.
+     * n_dft: int > 0 [scalar]
+       - The number of DFT points, presumably power of 2.
        - Default: ``512``
 
      * hop_length: int > 0 [scalar]
-       - Hop length between frames in sample,  probably <= ``n_fft``.
-       - Default: ``None`` (``n_fft //4 `` is used)
+       - Hop length between frames in sample,  probably <= ``n_dft``.
+       - Default: ``None`` (``n_dft / 2`` is used)
 
-     * pad_mode: str, 'default', 'channels_first', 'channels_last'.
+     * padding: str, ``'same'`` or ``'valid'``.
        - Padding strategies at the ends of signal.
-       - Default: ``'constant'``
-       
-     * center: bool, 
-       - If center== True pad_mode is used as an argument in tf.pad 
-       - If center ==False pad_mode is ignored
-       - Default '''True'''
-       
+       - Default: ``'same'``
+
      * power_spectrogram: float [scalar],
-       -  ``2.0`` to get power-spectrogram, ``1.0`` to get power-spectrogram.
+       -  ``2.0`` to get power-spectrogram, ``1.0`` to get amplitude-spectrogram.
        -  Usually ``1.0`` or ``2.0``.
        -  Default: ``2.0``
 
@@ -279,11 +277,10 @@ class tf_Spectrogram(Layer):
        -  Recommended to use ``True``, although it's not by default.
        -  Default: ``False``
 
-     * keep_old_order: bool
-       -  Whether return (None, n_channel, n_freq, n_time) instead of 
-       (None, n_channel, , n_time, n_freq)[newer version] if `'channels_first'`
-       - Whether return (None, n_freq, n_time,n_channel) instead of 
-       (None, , n_time, n_freq, n_channel)[newer version] if `'channels_last'``
+     * trainable_kernel: bool
+       -  Whether the kernels are trainable or not.
+       -  If ``True``, Kernels are initialised with DFT kernels and then trained.
+       -  Default: ``False``
 
      * image_data_format: string, ``'channels_first'`` or ``'channels_last'``.
        -  The returned spectrogram follows this image_data_format strategy.
@@ -347,7 +344,7 @@ class tf_Spectrogram(Layer):
         self.pad_mode = pad_mode
         self.power_spectrogram = power_spectrogram
         self.return_decibel_spectrogram = return_decibel_spectrogram
-        
+        self.input_spec = InputSpec(min_ndim=1)
         
         super(tf_Spectrogram, self).__init__(**kwargs)
 
@@ -367,7 +364,8 @@ class tf_Spectrogram(Layer):
         
 
         super(tf_Spectrogram, self).build(input_shape)
-
+        self.built=True
+        
     def call(self, x):
         output = self._tf_get_stft(x, 
                                    n_fft=self.n_fft, 
@@ -522,10 +520,8 @@ class MelSpectrogram(Spectrogram):
             
         assert sr > 0
         
-        if 'power_spectrogram' in kwargs:
-            assert (
-                kwargs['power_spectrogram'] == 2.0
-            ), 'In Melspectrogram, power_spectrogram should be set as 2.0.'
+        if kwargs['power_spectrogram'] != 2.0:
+                tf.compat.v1.logging.warn(f"In Melspectrogram, is recommendable to set power_spectrogram as 2.0.however it's been set as {kwargs['power_spectrogram']}")
         
         if 'return_decibel_spectrogram' in kwargs:
             assert (
@@ -584,13 +580,13 @@ class MelSpectrogram(Spectrogram):
             # now, whatever image_data_format, (batch_sample, n_ch, n_time, n_freq)
 
         #output = K.dot(power_spectrogram, self.freq2mel)
-        output = tf.matmul(power_spectrogram, self.freq2mel)
+        output = tf.tensordot(power_spectrogram, self.freq2mel,1)
+        
+        if self.keep_old_order_mel:
+            output = self._gone_in_future_version_order(output)
         
         if self.return_decibel_melgram:
             output = backend_keras.amplitude_to_decibel(output)
-
-        if self.keep_old_order_mel:
-            output = self._gone_in_future_version_order(output)
         
         if self.image_data_format == 'channels_last':
             output = K.permute_dimensions(output, [0, 2, 3, 1])
