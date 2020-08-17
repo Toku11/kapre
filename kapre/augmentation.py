@@ -50,6 +50,10 @@ class AdditiveNoise(Layer):
         super(AdditiveNoise, self).build(input_shape)
         
     def call(self, x, training=None):
+        
+        if training is None:
+            training = K.learning_phase()
+            
         if self.random_gain:
             noise_x = x + K.random_normal(
                 shape=K.shape(x), 
@@ -60,8 +64,11 @@ class AdditiveNoise(Layer):
             noise_x = x + K.random_normal(shape=K.shape(x), 
                                           mean=0.0, 
                                           stddev=self.power)
-
-        return K.in_train_phase(noise_x, x)
+        output = tf_utils.smart_cond(training,
+                                 lambda: array_ops.identity(noise_x),
+                                 lambda: array_ops.identity(x))
+        
+        return output
     
     def compute_output_shape(self, input_shape):
         return input_shape
@@ -110,18 +117,24 @@ class SpecAugment(Layer):
         super(SpecAugment, self).build(input_shape)
         
     def call(self, x, training=None):
-
+        
+        if training is None:
+            training = K.learning_phase()
+            
         if self.image_data_format == 'channels_first':
             assert x.shape[1] == 1, 'SpecAugment does not support 2D images yet'
 
         else:
             assert x.shape[3] == 1, 'SpecAugment does not support 2D images yet'
-            
+        
         if self.freq_param is not None:
-            x = K.in_train_phase(self.freq_mask(x, param=self.freq_param), x)
+            x = tf_utils.smart_cond(training, 
+                                     lambda: self.freq_mask(x, param=self.freq_param),
+                                     lambda: array_ops.identity(x))
         if self.time_param is not None:
-            x = K.in_train_phase(self.time_mask(x, param=self.time_param), x)
-
+            x = tf_utils.smart_cond(training, 
+                                     lambda: self.time_mask(x, param=self.freq_param),
+                                     lambda: array_ops.identity(x))
         return x
     
     def compute_output_shape(self, input_shape):
