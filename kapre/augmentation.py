@@ -44,10 +44,7 @@ class AdditiveNoise(Layer):
         self.noise_type = noise_type
         self.uses_learning_phase = True
         super(AdditiveNoise, self).__init__(**kwargs)
-        
-    def build(self, input_shape):
-        
-        super(AdditiveNoise, self).build(input_shape)
+   
         
     def call(self, x, training=None):
         
@@ -101,8 +98,6 @@ class SpecAugment(Layer):
         
         self.freq_param = freq_param
         self.time_param = time_param
-        self.uses_learning_phase = True
-        self.supports_masking = True
         assert image_data_format in ('default', 'channels_first', 'channels_last')
         assert (freq_param is not None) or (time_param is not None), "at least one param value should be defined"
         
@@ -112,9 +107,6 @@ class SpecAugment(Layer):
             self.image_data_format = image_data_format
             
         super(SpecAugment, self).__init__(**kwargs)
-        
-    def build(self, input_shape):
-        super(SpecAugment, self).build(input_shape)
         
     def call(self, x, training=None):
         
@@ -127,13 +119,17 @@ class SpecAugment(Layer):
         else:
             assert x.shape[3] == 1, 'SpecAugment does not support 2D images yet'
         
-        if self.freq_param is not None:
+        if self.freq_param:
             x = tf_utils.smart_cond(training, 
-                                     lambda: self.freq_mask(x, param=self.freq_param),
+                                     lambda: self.random_masking_along_axis(x, 
+                                                                            param=self.freq_param, 
+                                                                            axis = 0),
                                      lambda: array_ops.identity(x))
-        if self.time_param is not None:
+        if self.time_param:
             x = tf_utils.smart_cond(training, 
-                                     lambda: self.time_mask(x, param=self.freq_param),
+                                     lambda: self.random_masking_along_axis(x, 
+                                                                            param=self.time_param,
+                                                                            axis = 1),
                                      lambda: array_ops.identity(x))
         return x
     
@@ -149,9 +145,10 @@ class SpecAugment(Layer):
         base_config = super(SpecAugment, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
     
-    def freq_mask(self, input_f, param, name='freq_mask'):
+    
+    def random_masking_along_axis(self, input_f, param, axis, name='masking'):
         """
-        Apply masking to a spectrogram in the freq domain.
+        Apply masking to a spectrogram in the time/freq domain.
         Args:
           input: An audio spectogram.
           param: Parameter of freq masking.
@@ -160,38 +157,16 @@ class SpecAugment(Layer):
           A tensor of spectrogram.
         """
         # TODO: Support audio with channel > 1.
-        freq_max = tf.shape(input_f)[1]
+        _max = tf.shape(input_f)[axis + 1]
+        _shape = [-1, 1, 1, 1]
+        _shape[axis + 1] = _max
         f = tf.random.uniform(shape=(), minval=0, maxval=param, dtype=tf.dtypes.int32)
         f0 = tf.random.uniform(
-            shape=(), minval=0, maxval=freq_max - f, dtype=tf.dtypes.int32
+            shape=(), minval=0, maxval=_max - f, dtype=tf.dtypes.int32
         )
-        indices = tf.reshape(tf.range(freq_max), (-1,freq_max,1,1))
+        indices = tf.reshape(tf.range(_max), tuple(_shape))
         condition = tf.math.logical_and(
             tf.math.greater_equal(indices, f0), tf.math.less(indices, f0 + f)
         )
         return tf.compat.v2.where(condition, 0.0, input_f)
-
     
-    def time_mask(self,input_t, param, name=None):
-        """
-        Apply masking to a spectrogram in the time domain.
-
-        Apply masking to a spectrogram in the time domain.
-        Args:
-          input: An audio spectogram.
-          param: Parameter of time masking.
-          name: A name for the operation (optional).
-        Returns:
-          A tensor of spectrogram.
-        """
-        # TODO: Support audio with channel > 1.
-        time_max = tf.shape(input_t)[2]
-        t = tf.random.uniform(shape=(), minval=0, maxval=param, dtype=tf.dtypes.int32)
-        t0 = tf.random.uniform(
-            shape=(), minval=0, maxval=time_max - t, dtype=tf.dtypes.int32
-        )
-        indices = tf.reshape(tf.range(time_max), (-1,1,time_max,1))
-        condition = tf.math.logical_and(
-            tf.math.greater_equal(indices, t0), tf.math.less(indices, t0 + t)
-        )
-        return tf.compat.v2.where(condition, 0.0, input_t)

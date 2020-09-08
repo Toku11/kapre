@@ -205,53 +205,33 @@ class Delta(Layer):
 
         self.win_length = win_length
         self.mode = mode
+        self.n = (self.win_length - 1) // 2
+        self.denom = 2 * sum([_n ** 2 for _n in range(1, self.n + 1, 1)])  # denominator
         super(Delta, self).__init__(**kwargs)
-    
-    def build(self, input_shape):
-            
-        self.n = n = (self.win_length - 1) / 2.0
-        self.denom = n * (n + 1) * (2 * n + 1) / 3
-        kernel = K.arange(-n, n + 1, 1, dtype=K.floatx())
-        kernel = K.reshape(kernel, (1, kernel.shape[-1], 1, 1))  # (freq, time)
-        self.kernel = tf.Variable(kernel, 
-                                  dtype=K.floatx(), 
-                                  trainable=False, 
-                                  name='kernel_delta')
-        self.built = True
    
     def compute_output_shape(self, input_shape):
         return input_shape
         
     def call(self, x):
-        
-        n = (self.win_length - 1) / 2.0
-        denom = n * (n + 1) * (2 * n + 1) / 3
 
         if self.data_format == 'channels_first':
             x = K.permute_dimensions(x, (0, 2, 3, 1))
-        else:
-            x = K.permute_dimensions(x, (0, 1, 2, 3))
             
-        #         x = tf.pad(x, tf.constant([[0, 0], 
-        #                                   [0, 0], 
-        #                                   [int(n), int(n)], 
-        #                                   [0, 0]]),
-        #                    mode=self.mode, 
-        #                    name='pad_delta')
+        x = tf.pad(x, tf.constant([[0, 0], 
+                                  [int(self.n), int(self.n)],
+                                  [0,0],
+                                  [0, 0]]),
+                   mode=self.mode,name='pad_delta')
                                   
-        #kernel = K.arange(-n, n + 1, 1, dtype=K.floatx())
-        #kernel = K.reshape(kernel, (1, kernel.shape[-1], 1, 1))  # (freq, time)
+        kernel = K.arange(-self.n, self.n + 1, 1, dtype=K.floatx())
+        kernel = K.reshape(kernel, (-1, 1, 1, 1))  # (freq, time)
 
         x = K.conv2d(x, 
-                     self.kernel, 
-                     1, 
-                     padding='same', 
+                     kernel, 
                      data_format='channels_last')/self.denom
             
         if self.data_format == 'channels_first':
             x = K.permute_dimensions(x, (0, 3, 1, 2))
-        else:
-            x = K.permute_dimensions(x, (0, 1, 2, 3))
 
         return x
 
