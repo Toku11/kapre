@@ -6,3 +6,4 @@ from . import backend
 
 from .signal import *
 from .time_frequency import *
+from .augmentation import *
