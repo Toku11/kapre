@@ -10,7 +10,7 @@ from tensorflow.keras import backend as K
 from . import backend
 from .backend import _CH_FIRST_STR, _CH_LAST_STR, _CH_DEFAULT_STR
 from tensorflow.python.ops import array_ops
-from tensorflow.python.keras.utils import tf_utils
+from tensorflow.python.keras.utils import control_flow_util
 
 __all__ = [
     'SpecAugment',
@@ -66,11 +66,11 @@ class SpecAugment(Layer):
         ch_axis = 1 if self.input_data_format == 'channels_first' else 3
 
         if self.freq_param is not None:
-            x = tf_utils.smart_cond(training, 
+            x = control_flow_util.smart_cond(training, 
                                      lambda: backend.random_masking_along_axis(x, param=self.freq_param, axis = 0),
                                      lambda: array_ops.identity(x))
         if self.time_param is not None:
-            x = tf_utils.smart_cond(training, 
+            x = control_flow_util.smart_cond(training, 
                                      lambda: backend.random_masking_along_axis(x, param=self.time_param, axis = 1),
                                      lambda: array_ops.identity(x))
         return x
